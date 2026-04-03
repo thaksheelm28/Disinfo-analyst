@@ -1,0 +1,186 @@
+name: disinfo-analyst
+version: 0.2.0
+description: >
+  Disinformation Analyst — a three-task OpenEnv environment where an LLM agent
+  analyses synthetic news + social-media propagation graphs. Tasks range from
+  easy (node classification) through medium (propagation tracing) to hard
+  (claim severity rating). All three use the same graph structure but test
+  fundamentally different reasoning skills.
+
+author: OpenEnv Submission
+license: MIT
+tags: [openenv, content-moderation, disinformation, real-world, nlp]
+
+# ── Tasks (required: minimum 3, easy → medium → hard) ──────────────────────
+tasks:
+  task1_classify:
+    name: "Node Classification"
+    difficulty: easy
+    description: >
+      Tag every graph node with its correct disinformation label.
+      Focuses on content understanding — no graph reasoning needed.
+    primary_metric: tag_f1
+    score_range: [0.0, 1.0]
+    grader: F1 score of 'disinformation' predictions vs ground-truth labels
+
+  task2_trace:
+    name: "Propagation Tracing"
+    difficulty: medium
+    description: >
+      Identify upstream source relationships: assert which nodes are
+      origins or spreaders of other nodes. Requires multi-hop graph
+      reasoning over timestamps and propagation edges.
+    primary_metric: trace_score
+    score_range: [0.0, 1.0]
+    grader: >
+      Mean BFS path-existence score over claimed (src→dst) pairs.
+      Correct=1.0, backwards=0.25 partial credit, miss=0.0.
+
+  task3_severity:
+    name: "Claim Severity Rating"
+    difficulty: hard
+    description: >
+      Assign a float severity [0.0–1.0] to each factual claim based on
+      real-world harm potential. Requires nuanced judgment — no binary
+      answer exists.
+    primary_metric: severity_score
+    score_range: [0.0, 1.0]
+    grader: "1 − normalised RMSE vs ground-truth severities"
+
+# ── Difficulty presets (graph configs) ─────────────────────────────────────
+scenarios:
+  easy:
+    description: "Small graph, high disinfo ratio."
+    n_seeds: 1
+    n_articles: 6
+    n_posts: 8
+    n_claims: 2
+    disinfo_ratio: 0.5
+
+  default:
+    description: "Balanced mid-size graph."
+    n_seeds: 2
+    n_articles: 10
+    n_posts: 15
+    n_claims: 4
+    disinfo_ratio: 0.4
+
+  hard:
+    description: "Larger graph, more seeds, lower disinfo signal-to-noise."
+    n_seeds: 3
+    n_articles: 16
+    n_posts: 24
+    n_claims: 5
+    disinfo_ratio: 0.35
+
+  adversarial:
+    description: "Max difficulty — dense graph, subtle disinfo, many red herrings."
+    n_seeds: 3
+    n_articles: 20
+    n_posts: 30
+    n_claims: 6
+    disinfo_ratio: 0.25
+
+# ── Typed Action models ─────────────────────────────────────────────────────
+actions:
+  TagAction:
+    type: "tag"
+    fields:
+      node_id: str
+      label:
+        type: enum
+        values: [real, disinformation, satire, misleading, unverified]
+
+  TraceAction:
+    type: "trace"
+    fields:
+      src: str   # upstream node
+      dst: str   # downstream node
+
+  ScoreAction:
+    type: "score"
+    fields:
+      claim_id: str
+      severity: {type: float, min: 0.0, max: 1.0}
+
+  DoneAction:
+    type: "done"
+
+# ── Typed Observation model ─────────────────────────────────────────────────
+observation:
+  class: Observation
+  fields:
+    nodes:           list[NodeObservation]   # node_id, kind, text, timestamp, source, share_count
+    edges:           list[EdgeObservation]   # src, dst, relation
+    claims:          list[ClaimObservation]  # claim_id, text
+    agent_tags:      dict[str, str]
+    agent_traces:    list[list[str]]
+    agent_scores:    dict[str, float]
+    steps_taken:     int
+    steps_remaining: int
+    task:            str
+  hidden_fields: [credibility, _true_label, _is_origin, _true_severity]
+
+# ── Typed Reward model ─────────────────────────────────────────────────────
+reward:
+  class: Reward
+  description: >
+    Returned at every step (not just episode end) to provide partial
+    progress signals throughout the trajectory.
+  fields:
+    step_reward:    float   # immediate action reward (-0.05 for invalid, 0.0 for valid)
+    tag_progress:   float   # running tag F1 [0,1]
+    trace_progress: float   # running trace score [0,1]
+    score_progress: float   # running severity score [0,1]
+    cumulative:     float   # weighted running total [0,1]
+
+# ── API endpoints ───────────────────────────────────────────────────────────
+api:
+  reset:
+    method: POST
+    path: /reset
+    body: {task: str, scenario: str|null, seed: int|null, max_steps: int}
+    returns: Observation
+
+  step:
+    method: POST
+    path: /step
+    body: {action: Action}
+    returns: StepResult  # {observation, reward, done, info}
+
+  state:
+    method: GET
+    path: /state
+    returns: Observation
+    note: "Read-only — no side effects."
+
+  evaluate:
+    method: GET
+    path: /evaluate
+    returns: EvaluationResult
+
+  tasks:
+    method: GET
+    path: /tasks
+    returns: dict  # all task definitions
+
+  health:
+    method: GET
+    path: /health
+
+# ── Grading ─────────────────────────────────────────────────────────────────
+grading:
+  method: weighted_average
+  weights: {tag_f1: 0.40, trace_score: 0.35, severity_score: 0.25}
+  score_range: [0.0, 1.0]
+  partial_credit:
+    - "Backwards traces earn 0.25 (partial credit)"
+    - "Invalid actions: −0.05 step penalty"
+    - "Unscored claims default to 0.5 (max uncertainty penalty)"
+
+# ── Runtime ─────────────────────────────────────────────────────────────────
+runtime:
+  entrypoint: "uvicorn app:app --host 0.0.0.0 --port 7860"
+  inference_script: inference.py
+  dockerfile: Dockerfile
+  python_requires: ">=3.10"
