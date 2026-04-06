@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "disinfo-analyst"
+version = "0.2.0"
+description = "Disinformation Analyst — OpenEnv three-task environment"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = ["openenv", "disinformation", "content-moderation", "nlp", "reinforcement-learning"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.0.0",
+    "openai>=1.30.0",
+    "requests>=2.31.0",
+    "httpx>=0.27.0",
+    "openenv-core>=0.2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+# ── Required by openenv validate: server entry point ────────────────────────
+[project.scripts]
+server = "server.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
+exclude = ["venv*", ".git*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
